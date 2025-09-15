@@ -1,11 +1,19 @@
 /* eslint-disable max-len */
 /* eslint-disable jsx-a11y/control-has-associated-label */
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { UserWarning } from './UserWarning';
-import { client as fetchClient } from './utils/fetchClient';
 import { Todo } from './types/Todo';
 
-import { filteredTodos } from './components/filteredTodos';
+import { useToChangeTheTodo as toChangeTheTodo } from './components/toChangeTheTodo';
+import { handleUpdateTodo } from './components/handleUpdateTodo';
+import { handleToggle } from './components/handleToggle';
+import { handleToggleAll } from './components/handleToggleAll';
+import { handleAddTodo } from './components/handleAddTodo';
+import { deleteTodo } from './components/deleteTodo';
+import { handleDelete } from './components/handleDelete';
+import { useFilteredTodos } from './components/filteredTodos';
+import { useTrackAmountChange } from './components/trackAmountChange';
+import { useRequestToInsert } from './components/requestToInsert';
 
 const USER_ID = 3381;
 
@@ -28,254 +36,15 @@ export const App: React.FC = () => {
 
   const inputRef = useRef<HTMLInputElement>(null);
 
+  useRequestToInsert({ setTodos, setError, setErrorType });
+  const filteredTodos = useFilteredTodos({ todos, filter });
+
+  useTrackAmountChange({ setChangeQuantity, todos, creatingId });
+  toChangeTheTodo({ error, setError });
+
   if (!USER_ID) {
     return <UserWarning />;
   }
-
-  // eslint-disable-next-line
-  useEffect(() => {
-    fetchClient
-      .get<Todo[]>(`/todos?userId=${USER_ID}`)
-      .then(data => {
-        setTodos(data);
-      })
-      .catch(() => {
-        setError(true);
-        setErrorType('load');
-      });
-  }, []);
-
-  // eslint-disable-next-line
-  const filteredTodos = useMemo(() => {
-    switch (filter) {
-      case 'active':
-        return todos.filter(todo => !todo.completed);
-      case 'completed':
-        return todos.filter(todo => todo.completed);
-      default:
-        return todos;
-    }
-  }, [todos, filter]);
-
-  /* eslint-disable */
-  useEffect(() => {
-    setChangeQuantity(
-      todos.filter(d => !d.completed && d.id !== creatingId).length,
-    );
-  }, [todos, creatingId]);
-  /* eslint-enable */
-
-  const handleDelete = (list: Todo[]) => {
-    if (list.length === 0) {
-      return;
-    }
-
-    const listOfClear =
-      list.length === 1 ? [...list] : list.filter(t => t.completed);
-
-    // Mostrar loaders para todos os todos sendo deletados
-    setProcessingIds(prev => [...prev, ...listOfClear.map(t => t.id)]);
-
-    Promise.allSettled(
-      listOfClear.map(todo =>
-        fetchClient
-          .delete(`/todos/${todo.id}`)
-          .then(() => ({ todo, success: true }))
-          .catch(() => ({ todo, success: false })),
-      ),
-    )
-      .then(results => {
-        const failedIds = results
-          .filter(r => r.status === 'fulfilled' && !r.value.success)
-          .map(r => r.value.todo.id);
-
-        setTodos(prev =>
-          prev.filter(
-            t =>
-              !listOfClear.some(c => c.id === t.id) || failedIds.includes(t.id),
-          ),
-        );
-
-        if (failedIds.length > 0) {
-          setError(true);
-          setErrorType('delete');
-        }
-      })
-      .finally(() => {
-        setProcessingIds(prev =>
-          prev.filter(id => !listOfClear.some(t => t.id === id)),
-        );
-
-        setTimeout(() => {
-          inputRef.current?.focus();
-        }, 0);
-      });
-  };
-
-  const deleteTodo = (todoId: number) => {
-    const delTodo = todos.find(t => t.id === todoId);
-
-    if (!delTodo) {
-      return;
-    }
-
-    setProcessingIds(prev => [...prev, todoId]);
-
-    fetchClient
-      .delete(`/todos/${todoId}`)
-      .then(() => {
-        setTodos(prev => prev.filter(todo => todo.id !== todoId));
-      })
-      .catch(() => {
-        setError(true);
-        setErrorType('delete');
-      })
-      .finally(() => {
-        setProcessingIds(prev => prev.filter(id => id !== todoId));
-
-        if (inputRef.current) {
-          setTimeout(() => inputRef.current?.focus(), 0);
-        }
-      });
-  };
-
-  /* eslint-disable @typescript-eslint/indent */
-  const handleAddTodo = (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!newTodo.trim()) {
-      setError(true);
-
-      setErrorType('empty');
-
-      return;
-    }
-
-    const tempTodo = Date.now();
-    const newTodoObj: Omit<Todo, 'id'> = {
-      id: tempTodo,
-      userId: USER_ID,
-      title: newTodo.trim(),
-      completed: false,
-    };
-
-    setTodos(prev => [...prev, newTodoObj]);
-    setCreatingId(tempTodo);
-
-    setIsSubmitting(true);
-
-    fetchClient
-      .post<Omit<Todo, 'id'>>('/todos', {
-        userId: USER_ID,
-        title: newTodo.trim(),
-        completed: false,
-      })
-      .then(createdTodo => {
-        setTodos((prev: Todo[]) =>
-          prev.map(t => (t.id === tempTodo ? createdTodo : t)),
-        );
-        setNewTodo('');
-        setCreatingId(null);
-      })
-      .catch(() => {
-        setTodos(prev => prev.filter(t => t.id !== tempTodo));
-        setError(true);
-        setErrorType('add');
-        setCreatingId(null);
-      })
-      .finally(() => {
-        setIsSubmitting(false);
-
-        if (inputRef.current) {
-          setTimeout(() => inputRef.current?.focus(), 0);
-        }
-      });
-  };
-  /* eslint-disable @typescript-eslint/indent */
-
-  const handleToggleAll = () => {
-    const allCompleted = todos.every(todo => todo.completed);
-    const newCompletedStatus = !allCompleted;
-
-    setProcessingIds(todos.map(todo => todo.id));
-
-    Promise.allSettled(
-      todos.map(todo =>
-        fetchClient.patch(`/todos/${todo.id}`, {
-          completed: newCompletedStatus,
-        }),
-      ),
-    )
-      .then(results => {
-        const updatedTodos = todos.map((todo, index) => ({
-          ...todo,
-          completed:
-            results[index].status === 'fulfilled'
-              ? newCompletedStatus
-              : todo.completed,
-        }));
-
-        setTodos(updatedTodos);
-      })
-      .catch(() => {
-        setError(true);
-        setErrorType('update');
-      })
-      .finally(() => {
-        setProcessingIds([]);
-      });
-  };
-
-  const handleToggle = (todo: Todo) => {
-    setProcessingIds(prev => [...prev, todo.id]);
-
-    fetchClient
-      .patch<Todo>(`/todos/${todo.id}`, { completed: !todo.completed })
-      .then(updatedTodo => {
-        setTodos(prev => prev.map(t => (t.id === todo.id ? updatedTodo : t)));
-      })
-      .catch(() => {
-        setError(true);
-        setErrorType('update');
-      })
-      .finally(() => {
-        setProcessingIds(prev => prev.filter(id => id !== todo.id));
-      });
-  };
-
-  /* eslint-disable */
-  useEffect(() => {
-    if (!error) return;
-
-    const timer = setTimeout(() => {
-      setError(false);
-    }, 3000);
-
-    return () => clearTimeout(timer);
-  }, [error]);
-  /* eslint-enable */
-
-  const handleUpdateTodo = (todo: Todo, newTitle: string) => {
-    const trimmedTitle = newTitle.trim();
-
-    if (!trimmedTitle) {
-      // se o título ficar vazio, deleta o todo
-      deleteTodo(todo.id);
-
-      return;
-    }
-
-    fetchClient
-      .patch<Todo>(`/todos/${todo.id}`, { title: trimmedTitle })
-      .then(updatedTodo => {
-        setTodos(prev => prev.map(t => (t.id === todo.id ? updatedTodo : t)));
-        setEditingId(null);
-        setEditledTitle('');
-      })
-      .catch(() => {
-        setError(true);
-        setErrorType('update');
-      });
-  };
 
   return (
     <div className="todoapp">
@@ -288,11 +57,33 @@ export const App: React.FC = () => {
             type="button"
             className={`todoapp__toggle-all ${todos.length > 0 && todos.every(todo => todo.completed) ? 'active' : ''}`}
             data-cy="ToggleAllButton"
-            onClick={handleToggleAll}
+            onClick={() =>
+              handleToggleAll({
+                todos,
+                setProcessingIds,
+                setTodos,
+                setError,
+                setErrorType,
+              })
+            }
           />
 
           {/* Add a todo on form submit */}
-          <form onSubmit={handleAddTodo}>
+          <form
+            onSubmit={event =>
+              handleAddTodo({
+                event,
+                newTodo,
+                setError,
+                setErrorType,
+                setTodos,
+                setCreatingId,
+                setIsSubmitting,
+                setNewTodo,
+                inputRef,
+              })
+            }
+          >
             <input
               ref={inputRef}
               data-cy="NewTodoField"
@@ -322,7 +113,15 @@ export const App: React.FC = () => {
                   type="checkbox"
                   className="todo__status"
                   checked={todo.completed}
-                  onChange={() => handleToggle(todo)}
+                  onChange={() =>
+                    handleToggle({
+                      todo,
+                      setProcessingIds,
+                      setTodos,
+                      setError,
+                      setErrorType,
+                    })
+                  }
                 />
               </label>
 
@@ -340,10 +139,30 @@ export const App: React.FC = () => {
                     value={editledTitle}
                     autoFocus
                     onChange={e => setEditledTitle(e.target.value)}
-                    onBlur={() => handleUpdateTodo(todo, editledTitle)}
+                    onBlur={() =>
+                      handleUpdateTodo({
+                        todo,
+                        newTitle: editledTitle,
+                        deleteTodo,
+                        setTodos,
+                        setEditingId,
+                        setEditledTitle,
+                        setError,
+                        setErrorType,
+                      })
+                    }
                     onKeyDown={e => {
                       if (e.key === 'Enter') {
-                        handleUpdateTodo(todo, editledTitle);
+                        handleUpdateTodo({
+                          todo,
+                          newTitle: editledTitle,
+                          deleteTodo,
+                          setTodos,
+                          setEditingId,
+                          setEditledTitle,
+                          setError,
+                          setErrorType,
+                        });
                       }
 
                       if (e.key === 'Escape') {
@@ -361,7 +180,17 @@ export const App: React.FC = () => {
                 type="button"
                 className="todo__remove"
                 data-cy="TodoDelete"
-                onClick={() => deleteTodo(todo.id)}
+                onClick={() =>
+                  deleteTodo({
+                    todoId: todo.id,
+                    todos,
+                    setProcessingIds,
+                    setTodos,
+                    setError,
+                    setErrorType,
+                    inputRef,
+                  })
+                }
               >
                 ×
               </button>
@@ -424,7 +253,16 @@ export const App: React.FC = () => {
               className="todoapp__clear-completed"
               data-cy="ClearCompletedButton"
               disabled={filteredTodos.every(todo => !todo.completed)}
-              onClick={() => handleDelete(filteredTodos)}
+              onClick={() =>
+                handleDelete({
+                  list: filteredTodos,
+                  setProcessingIds,
+                  setTodos,
+                  setError,
+                  setErrorType,
+                  inputRef,
+                })
+              }
             >
               Clear completed
             </button>
